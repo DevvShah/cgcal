@@ -1,0 +1,119 @@
+import tkinter as tk
+from tkinter import ttk
+import serial
+import re
+import math
+
+class CGCalculator:
+    def __init__(self, master):
+        self.master = master
+        self.master.title("CG Calculator")
+        self.master.geometry("800x600")
+
+        self.freeze_count = 0
+        self.pre_incline_weights = [0, 0, 0, 0]
+        self.post_incline_weights = [0, 0, 0, 0]
+
+        self.cart_options = ttk.Combobox(self.master, values=["Pod1", "Pod2", "Pod3", "Pod4"])
+        self.cart_options.grid(row=0, column=0)
+        self.cart_options.current(0)
+        self.cart_options.bind("<<ComboboxSelected>>", self.load_cart_data)
+
+        self.freeze_button = tk.Button(self.master, text="Freeze Readings", command=self.freeze_readings)
+        self.freeze_button.grid(row=1, column=0)
+
+        self.live_scale_data_label = tk.Label(self.master, text="Live Scale Data:")
+        self.live_scale_data_label.grid(row=2, column=0)
+        self.pre_incline_data_label = tk.Label(self.master, text="Pre-Incline Data:")
+        self.pre_incline_data_label.grid(row=2, column=1)
+        self.post_incline_data_label = tk.Label(self.master, text="Post-Incline Data:")
+        self.post_incline_data_label.grid(row=2, column=2)
+
+        self.cg_x_label = tk.Label(self.master, text="CG X:")
+        self.cg_x_label.grid(row=7, column=0)
+        self.cg_y_label = tk.Label(self.master, text="CG Y:")
+        self.cg_y_label.grid(row=7, column=1)
+        self.cg_z_label = tk.Label(self.master, text="CG Z:")
+        self.cg_z_label.grid(row=7, column=2)
+
+        self.cg_x_var = tk.DoubleVar()
+        self.cg_y_var = tk.DoubleVar()
+        self.cg_z_var = tk.DoubleVar()
+
+        tk.Label(self.master, textvariable=self.cg_x_var).grid(row=8, column=0)
+        tk.Label(self.master, textvariable=self.cg_y_var).grid(row=8, column=1)
+        tk.Label(self.master, textvariable=self.cg_z_var).grid(row=8, column=2)
+
+        self.scale_vars = [tk.DoubleVar() for _ in range(4)]
+        self.pre_incline_vars = [tk.DoubleVar() for _ in range(4)]
+        self.post_incline_vars = [tk.DoubleVar() for _ in range(4)]
+
+        for i in range(4):
+            tk.Label(self.master, textvariable=self.scale_vars[i]).grid(row=3+i, column=0)
+            tk.Label(self.master, textvariable=self.pre_incline_vars[i]).grid(row=3+i, column=1)
+            tk.Label(self.master, textvariable=self.post_incline_vars[i]).grid(row=3+i, column=2)
+
+        self.get_weight_periodically("COM1", self.scale_vars[0])
+        self.get_weight_periodically("COM2", self.scale_vars[1])
+        self.get_weight_periodically("COM3", self.scale_vars[2])
+        self.get_weight_periodically("COM4", self.scale_vars[3])
+
+    def load_cart_data(self, event):
+        selected_cart = self.cart_options.get()
+        if selected_cart == "Pod1":
+            self.x_distance = 100
+            self.y_distance = 200
+            self.z_distance = 300
+            self.wheel_diameter = 400
+            self.lifting_height = 500
+
+    def get_weight_periodically(self, com_address, target_variable, period_ms=1000):
+        try:
+            serial_port = serial.Serial(com_address, baudrate=9600)
+            a = str(serial_port.readline())
+            scale_value = float(re.sub("[^0-9.]", "", a))
+            target_variable.set(scale_value)
+            self.master.after(period_ms, lambda: self.get_weight_periodically(com_address, target_variable))
+        except:
+            target_variable.set(0)
+            self.master.after(period_ms, lambda: self.get_weight_periodically(com_address, target_variable))
+
+    def freeze_readings(self):
+        if self.freeze_count == 0:
+            self.pre_incline_weights = [var.get() for var in self.scale_vars]
+            for i, var in enumerate(self.pre_incline_vars):
+                var.set(self.pre_incline_weights[i])
+            self.freeze_count += 1
+        elif self.freeze_count == 1:
+            self.post_incline_weights = [var.get() for var in self.scale_vars]
+            for i, var in enumerate(self.post_incline_vars):
+                var.set(self.post_incline_weights[i])
+            self.freeze_count = 0
+
+        self.calculate_cg()
+
+    def calculate_cg(self):
+        scale_1_value, scale_2_value, scale_3_value, scale_4_value = self.pre_incline_weights
+        total_weight = sum(self.pre_incline_weights)
+        total_weight_front = scale_1_value + scale_3_value
+        total_weight_rear = scale_2_value + scale_4_value
+        cg_distance_x = self.x_distance * (total_weight_front / total_weight) if total_weight != 0 else 0
+        cg_distance_y = self.y_distance * (total_weight_rear / total_weight) if total_weight != 0 else 0
+        self.cg_x_var.set(round(cg_distance_x, 2))
+        self.cg_y_var.set(round(cg_distance_y, 2))
+
+        wheel_radius = self.wheel_diameter / 2
+        tz_numer = total_weight - sum(self.post_incline_weights)
+        angle_Ratio = self.lifting_height / self.x_distance
+        theta_W = math.asin(angle_Ratio)
+        tan_Weight = math.tan(theta_W)
+        tz_Denom = sum(self.post_incline_weights) * tan_Weight
+        tz_ratio = tz_numer / tz_Denom
+        z_wprod = self.x_distance * tz_ratio
+        z_d = wheel_radius + z_wprod
+        self.cg_z_var.set(round(z_d, 2))
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = CGCalculator(root)
+    root.mainloop()
