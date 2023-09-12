@@ -1,0 +1,254 @@
+import serial
+import tkinter
+import serial.tools.list_ports
+import time
+import math
+import sys
+import re
+import keyboard
+
+from tkinter import ttk
+
+class Menu:
+    def __init__(self):
+        self.main_window = tkinter.Tk()
+        self.main_window.title('Serial Data monitor')
+        self.main_window.geometry("1000x600")
+        self.main_window.configure(bg='LightBlue')  # Change the background color
+
+        # Frames
+        self.frame = tkinter.Frame(self.main_window, bg='LightGrey')  # Change the frame color
+        self.frame.pack()
+        self.frame.place(x=0, y=0, height=600, width=1000)
+
+        # Create entry fields
+        self.entry_x_label, self.entry_x_label_value = self.create_entry(self.frame, "Enter post to post X distance (in)", 10, 80)
+        self.entry_y_label, self.entry_y_label_value = self.create_entry(self.frame, "Enter post to post Y distance (in)", 10, 120)
+        self.entry_tt_z_label, self.entry_tt_z_label_value = self.create_entry(self.frame, "Enter Floor to TT Distance Z (in)", 10, 160)
+        self.entry_wheel_label, self.entry_wheel_label_value = self.create_entry(self.frame, "Enter wheel diameter (in), 0 if none", 10, 200)
+        self.entry_h_label, self.entry_h_label_value = self.create_entry(self.frame, "Enter cart lifting height (in), 0 if none", 10, 240)
+
+        # Create RS232 data labels
+        self.scale_weight_label_1_variable = tkinter.DoubleVar()
+        self.scale_weight_label_1 = self.create_scale_label(self.frame, "Scale 1 :", 700, 80, self.scale_weight_label_1_variable)
+        self.scale_weight_label_2_variable = tkinter.DoubleVar()
+        self.scale_weight_label_2 = self.create_scale_label(self.frame, "Scale 2 :", 700, 120, self.scale_weight_label_2_variable)
+        self.scale_weight_label_3_variable = tkinter.DoubleVar()
+        self.scale_weight_label_3 = self.create_scale_label(self.frame, "Scale 3 :", 700, 160, self.scale_weight_label_3_variable)
+        self.scale_weight_label_4_variable = tkinter.DoubleVar()
+        self.scale_weight_label_4 = self.create_scale_label(self.frame, "Scale 4 :", 700, 200, self.scale_weight_label_4_variable)
+
+        # Create result labels
+        self.total_weight_label_variable = tkinter.DoubleVar()
+        self.total_weight_label = self.create_result_label(self.frame, "Total Weight (lb):", 675, 350, self.total_weight_label_variable)
+        self.x_cg_calculation_label_variable = tkinter.DoubleVar()
+        self.x_cg_calculation_label = self.create_result_label(self.frame, "X CG (in):", 700, 400, self.x_cg_calculation_label_variable)
+        self.y_cg_calculation_label_variable = tkinter.DoubleVar()
+        self.y_cg_calculation_label = self.create_result_label(self.frame, "Y CG (in):", 700, 450, self.y_cg_calculation_label_variable)
+        self.z_cg_calculation_label_variable = tkinter.DoubleVar()
+        self.z_cg_calculation_label = self.create_result_label(self.frame, "Z CG (in):", 700, 500, self.z_cg_calculation_label_variable)
+
+        # Create quit button
+        self.quit_button = tkinter.Button(self.main_window, text='Quit', command=self.main_window.destroy, height=2, width=6)
+        self.quit_button.pack()
+        self.quit_button.place(x=950, y=560)
+
+        #Create a Store button to store 2-D CG
+        self.store_button = tkinter.Button(self.main_window, text='Store',command=self.store_scales, height=2, width=6)
+        self.store_button.pack()
+        self.store_button.place(x=850, y=250)
+
+
+        # Create a periodical job to read scale weight values
+        ports = serial.tools.list_ports.comports() #gives all connected ports
+        portList = []
+        for onePort in ports:
+            if "COM3" not in onePort:
+                portList.append(onePort)
+        scales={"R1":"","R2":"","R3":"","R4":""} #will use to assign scales
+
+        if scales!={}:
+            for i in range(len(portList)): 
+                if portList[i].serial_number=='FTD1A9LDA':
+                    scales["R3"]=portList[i].name
+                elif portList[i].serial_number=='FTD1AAEOA':
+                    scales["R1"]=portList[i].name
+                elif portList[i].serial_number=='FTD1A9SQA':
+                    scales["R4"]=portList[i].name
+                else:
+                    scales["R2"]=portList[i].name
+        #assigns scales to the scales dictionary based on it's converter's serial number        
+
+##        while True:
+##            if scales["R1"]!="":
+##                R1=serial.Serial(port=scales["R1"], baudrate=9600, timeout=3)
+##            else:
+##                print("All ports not connected")
+##                break
+##            if scales["R2"]!="":
+##                R2=serial.Serial(port=scales["R2"], baudrate=9600, timeout=3)
+##            else:
+##                print("All ports not connected")
+##                break
+##            if scales["R3"]!="":
+##                R3=serial.Serial(port=scales["R3"], baudrate=9600, timeout=3)
+##            else:
+##                print("All ports not connected")
+##                break
+##            if scales["R4"]!="":
+##                R4=serial.Serial(port=scales["R4"], baudrate=9600, timeout=3)
+##            else:
+##                print("All ports not connected")
+##                break
+##            break
+##        #only allows the rest of the code to run if all scales are assigned    
+        self.get_weight_periodically(scales["R1"], self.scale_weight_label_1_variable, self.main_window, period_ms=1000)
+        self.get_weight_periodically(scales["R2"], self.scale_weight_label_2_variable, self.main_window, period_ms=1000)
+        self.get_weight_periodically(scales["R3"], self.scale_weight_label_3_variable, self.main_window, period_ms=1000)
+        self.get_weight_periodically(scales["R4"], self.scale_weight_label_4_variable, self.main_window, period_ms=1000)
+
+        # read manual inputs
+        def validate_is_number_and_generate_event(entry_value, label_name):
+            if entry_value == '':
+                return True
+            try:
+                float(entry_value)
+                print(f"the entry value of {label_name} is: {entry_value}")
+            except ValueError:
+                return False
+            
+            self.main_window.event_generate('<<UpdateNeeded>>', when='tail')
+            return True
+
+        # register the validation commands for user inputs
+        validation_command = self.main_window.register(validate_is_number_and_generate_event)
+        self.entry_x_label_value['validate'] = 'key'
+        self.entry_x_label_value['validatecommand'] = (validation_command, '%P', 'Enter post to post X distance (in)')
+        self.entry_y_label_value['validate'] = 'key'
+        self.entry_y_label_value['validatecommand'] = (validation_command, '%P', 'Enter post to post Y distance (in)')
+        self.entry_tt_z_label_value['validate'] = 'key'
+        self.entry_tt_z_label_value['validatecommand'] = (validation_command, '%P', 'Enter Floor to TT Distance Z (in)')
+        self.entry_wheel_label_value['validate'] = 'key'
+        self.entry_wheel_label_value['validatecommand'] = (validation_command, '%P', 'Enter wheel diameter (in)')
+        self.entry_h_label_value['validate'] = 'key'
+        self.entry_h_label_value['validatecommand'] = (validation_command, '%P', 'Enter lifting height (in)')
+
+        # calculate results
+        def do_update(event):
+            print("update event is called.")
+            self.calculate_data()
+
+        self.main_window.bind('<<UpdateNeeded>>', do_update)
+
+        # Run the event loop
+        self.main_window.mainloop()
+
+
+    #############################################
+    # Utitiliy functions to create UI component #
+    #############################################
+    def create_entry(self, frame: tkinter.Frame, text: str, x: int, y: int):
+        # create label
+        new_label= tkinter.Label(frame, text=text)
+        new_label.pack()
+        new_label.place(x = x, y = y)
+        # create entry box
+        new_entry = ttk.Entry(self.main_window, justify='right')
+        new_entry.pack()
+        new_entry.place(x = x + 200, y = y, height=20, width=120)
+        return new_label, new_entry
+
+    def create_scale_label(self, frame: tkinter.Frame, text: str, x: int, y: int, text_variable: tkinter.DoubleVar):
+        new_label = tkinter.Label(frame, text=text)
+        new_label.pack()
+        new_label.place(x = x, y = y, height=20, width=80)
+
+        new_value = tkinter.Label(frame, bg='Green', textvariable=text_variable)
+        new_value.pack()
+        new_value.place(x = x + 110, y = y, height=20, width=120)
+        return new_label
+
+    def create_result_label(self, frame: tkinter.Frame, text: str, x: int, y: int, text_variable: tkinter.DoubleVar):
+        new_label = tkinter.Label(frame, text=text, font=("Arial Bold", 12), bg='Violet', height=2, width=20)
+        new_label.pack()
+        new_label.place(x = x, y = y)
+        new_value = tkinter.Label(frame, bg='Grey', textvariable= text_variable)
+        new_value.place(x = 860, y = y + 10)
+        return new_label
+    
+    ##################################################
+    # Utitiliy functions to fetch and calculate data #
+    ##################################################
+    def get_weight_periodically(self, com_address: str, target_variable: tkinter.DoubleVar, tk: tkinter.Tk, period_ms: int = 1000):
+##        print(f"{com_address}: {target_variable.get()}")
+        try:
+            serial_port = serial.Serial(com_address, baudrate=9600)
+##        serial_port.flushInput()
+##        if serial_port.inWaiting():
+            # read and process the data
+##            scale_reading = str(serial_port.readline(serial_port.inWaiting()))
+##            scale_value = float(re.sub("[^0-9.]","",scale_reading))
+            a=str(serial_port.readline())#retrieves raw scale reading
+            scale_value=float(re.sub("[^0-9.]","",a))
+                # assign the scale_value to the target variable
+            target_variable.set(scale_value)
+            self.calculate_data()
+            tk.after(period_ms, lambda: self.get_weight_periodically(com_address, target_variable, tk))
+        except:
+            scale_value=float(0)
+            target_variable.set(scale_value)
+            self.calculate_data()
+            tk.after(period_ms, lambda: self.get_weight_periodically(com_address, target_variable, tk))
+    def store_scales(self):
+        scale_1_1 = self.scale_weight_label_1_variable.get()
+        scale_2_1 = self.scale_weight_label_2_variable.get()
+        scale_3_1 = self.scale_weight_label_3_variable.get()
+        scale_4_1 = self.scale_weight_label_4_variable.get()
+        total_1 = scale_1_1 + scale_2_1 + scale_3_1 + scale_4_1
+        self.store_1=(round(scale_1_1))
+        self.store_2=(round(scale_2_1))
+        self.store_3=(round(scale_3_1))
+        self.store_4=(round(scale_4_1))
+        self.store_T=(round(total_1))
+        
+    def calculate_data(self):
+        x_distance = float(self.entry_x_label_value.get()) if self.entry_x_label_value.get() else 0
+##        print(f"x distance: {x_distance}")
+        y_distance = float(self.entry_y_label_value.get()) if self.entry_y_label_value.get() else 0
+
+        scale_1_value = self.scale_weight_label_1_variable.get()
+        scale_2_value = self.scale_weight_label_2_variable.get()
+        scale_3_value = self.scale_weight_label_3_variable.get()
+        scale_4_value = self.scale_weight_label_4_variable.get()
+
+        total_weight = scale_1_value + scale_2_value + scale_3_value + scale_4_value
+        self.total_weight_label_variable.set(round(total_weight, 5))
+
+        total_weight_front = scale_1_value + scale_3_value
+        total_weight_rear = scale_2_value + scale_4_value
+        cg_distance_x = x_distance * (total_weight_front / total_weight) if total_weight!=0 else 0
+        cg_distance_y = y_distance * (total_weight_rear / total_weight) if total_weight!=0 else 0
+        self.x_cg_calculation_label_variable.set(round(cg_distance_x, 2))
+        self.y_cg_calculation_label_variable.set(round(cg_distance_y, 2))
+        
+        wheel_radius = float(self.entry_wheel_label_value.get()) if self.entry_wheel_label_value.get() else 0
+        ttz_distance = float(self.entry_tt_z_label_value.get()) if self.entry_tt_z_label_value.get() else 0
+        cg_lift = float(self.entry_h_label_value.get()) if self.entry_h_label_value.get() else 0
+        try:
+            self.store_1!=0
+            total_weight = scale_1_value + scale_2_value + scale_3_value + scale_4_value
+            tz_numer=float(total_weight-self.store_T)
+            angle_Ratio=float(cg_lift/x_distance)
+            theta_W = float(math.asin(angle_Ratio))
+            tan_Weight = float(math.tan(theta_W))
+            tz_Denom = float(self.store_T * tan_Weight)
+            tz_ratio = float(tz_numer / tz_Denom)
+            z_wprod = float(x_distance * tz_ratio)
+            z_d = float(wheel_radius + z_wprod)
+            self.z_cg_calculation_label_variable.set(round(z_d, 2))
+        except:
+            pass
+            
+
+Menu()
+
